@@ -1,0 +1,35 @@
+# Fileformat
+jpg 
+png 
+tiff 
+##
+# Paperformat
+A4 
+A5 
+##
+# Orientation
+portrait 
+landscape 
+##
+# Resolution
+100 
+200 
+300 
+600 
+1200 
+##
+# Source
+ADF 
+Flatbed 
+##
+# Batch
+batch 
+noBatch 
+##
+# Crop
+crop 
+noCrop 
+##
+# PDF
+pdf 
+noPdf 
