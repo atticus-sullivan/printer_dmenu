@@ -25,10 +25,90 @@ contains(){
 	return 0
 }
 
+post-editing(){
+	# remove white borders if wished
+	if [[ "${preferences[5]}" == "crop" ]]
+	then
+		# for the case thst more than one set of files should be cropped
+		if [[ "${preferences[8]}" != dry ]]
+		then
+			notify-send "You can now remove distortions in the white border (which is to be removed), to improve the cropping result"
+			gimp "${filelist[@]}" #let the user remove black dots in the white border to improve the result
+		fi
+
+		for file in ${filelist[@]}
+		do
+			# check what should be removed
+			echo convert "$file" -virtual-pixel edge -blur 0x10 -fuzz 15% -trim  -format '%wx%h%O\n' info:
+			crop1="$(convert "$file" -virtual-pixel edge -blur 0x10 -fuzz 15% -trim  -format '%wx%h%O\n' info:)"
+			# tmp="$(mktemp)"
+			# convert "$file" -crop "${crop1}" "${tmp}"
+
+			# crop2="$(convert "$tmp" -chop 40x0 -virtual-pixel edge -blur 0x10 -fuzz 15% -trim  -format '%wx%h%O\n' info:)"
+			# convert "$tmp" -crop "${crop2}" "${file%.${preferences[0]}}-cropped.${preferences[0]}"
+
+			# really crop the picture
+			echo convert "$file" -crop "${crop1}" "${file%.${preferences[0]}}-cropped.${preferences[0]}"
+			if [[ "${preferences[8]}" != dry ]]
+			then
+				convert "$file" -crop "${crop1}" "${file%.${preferences[0]}}-cropped.${preferences[0]}"
+			fi
+			filelist1+=("${file%.${preferences[0]}}-cropped.${preferences[0]}")
+			# rm -v "$tmp"
+		done
+	fi
+
+	# enhance pictures after (potentially) cropping
+	for file in ${filelist[@]}
+	do
+		if [[ "${preferences[8]}" != dry ]]
+		then
+			convert "$file" -normalize -gamma 0.8,0.8,0.8 +dither -posterize 3 "${file%.${preferences[0]}}-enh.${preferences[0]}"
+		fi
+		filelist2+=("${file%.${preferences[0]}}-enh.${preferences[0]}")
+	done
+
+	# make a pdf out of the picture(s) if wished
+	if [[ "${preferences[6]}" == "pdf" ]]
+	then
+		# paperdimensions will be the ones that were scanned, each image will be on a new page
+
+		# pdf out of original pictures
+		echo convert $(printf "( -size $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist[@]})\
+			-units pixelsperinch -density 150 "${filelist%${preferences[0]}}pdf"
+
+		if [[ "${preferences[8]}" != dry ]]
+		then
+			convert $(printf "( -size $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist[@]})\
+				-units pixelsperinch -density 150 "${filelist%${preferences[0]}}pdf"
+		fi
+
+		# pdf out of cropped pictures
+		echo convert $(printf "( -size $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist1[@]})\
+			-units pixelsperinch -density 150 "${filelist%.${preferences[0]}}-crop.pdf"
+
+		if [[ "${preferences[8]}" != dry ]]
+		then
+			convert $(printf "( -size $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist1[@]})\
+				-units pixelsperinch -density 150 "${filelist%.${preferences[0]}}-crop.pdf"
+		fi
+
+		# pdf out of enhanced pictures
+		echo convert $(printf "( -size $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist2[@]})\
+			-units pixelsperinch -density 150 "${filelist%.${preferences[0]}}-enh.pdf"
+
+		if [[ "${preferences[8]}" != dry ]]
+		then
+			convert $(printf "( -size $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*150)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist2[@]})\
+				-units pixelsperinch -density 150 "${filelist%.${preferences[0]}}-enh.pdf"
+		fi
+	fi
+}
+
 # prompt the user, then scan and if wished work with scanned file
 scanner(){
 	# set default values
-	preferences=(jpg A4 portrait 300 Flatbed crop pdf noBatch)
+	preferences=(jpg A4 portrait 300 Flatbed crop pdf noBatch noDry)
 
 	# read given parameters
 	for ele in $@
@@ -42,6 +122,7 @@ scanner(){
 			crop)          preferences[5]=yes;                   preset[5]=true;;
 			pdf)           preferences[6]=yes;                   preset[6]=true;;
 			batch)         preferences[7]=yes;                   preset[7]=true;;
+			dry)           preferences[8]=dry;                   preset[8]=true;;
 			skip)          skip=true;;
 		esac
 	done
@@ -85,6 +166,8 @@ scanner(){
 					Batch)
 						batch+=("$line")
 						;;
+					Dry)
+						dryRun+=("$line")
 				esac
 			fi
 		done
@@ -102,8 +185,9 @@ scanner(){
 					 "Source [${preferences[4]}]" \
 					   "Crop [${preferences[5]}]" \
 						"PDF [${preferences[6]}]" \
-					  "Batch [${preferences[7]}]"
-				| dmenu -i -l 9)
+					  "Batch [${preferences[7]}]" \
+					    "Dry [${preferences[8]}]" \
+				| dmenu -i -l 10)
 
 			# if the user didn't input anything, exit
 			if [[ -z "$resp" ]]
@@ -127,11 +211,11 @@ scanner(){
 					preferences[2]="$tmp";;
 				Resolution*)
 					tmp=$(printf "%s\n" ${resolution[@]} "Back" | dmenu -i -l "$(( ${#resolution[@]} +1 ))")
-					contains "${tmp}" ${srces[@]} && notify-send "Invalid input" && continue
+					contains "${tmp}" ${resolution[@]} && notify-send "Invalid input" && continue
 					preferences[3]="$tmp";;
 				Source*)
 					tmp=$(printf "%s\n" ${srces[@]} "Back" | dmenu -i -l "$(( ${#srces[@]} +1 ))")
-					contains "${tmp}" ${resolution[@]} && notify-send "Invalid input" && continue
+					contains "${tmp}" ${srces[@]} && notify-send "Invalid input" && continue
 					preferences[4]="$tmp";;
 				Crop*)
 					tmp=$(printf "%s\n" ${crop[@]} "Back" | dmenu -i -l "$(( ${#crop[@]} +1 ))")
@@ -145,6 +229,10 @@ scanner(){
 					tmp=$(printf "%s\n" ${batch[@]} "Back" | dmenu -i -l "$(( ${#batch[@]} +1 ))")
 					contains "$tmp" ${batch[@]} && notify-send "Invalid input" && continue
 					preferences[7]="$tmp";;
+				Dry*)
+					tmp=$(printf "%s\n" ${dryRun[@]} "Back" | dmenu -i -l "$(( ${#dryRun[@]} +1 ))")
+					contains "$tmp" ${dryRun[@]} && notify-send "Invalid input" && continue
+					preferences[8]="$tmp";;
 				Scan) break;;
 			esac
 		done
@@ -155,21 +243,22 @@ scanner(){
 	contains "${preferences[0]}" ${fileformat[@]} && error "Invalid input" && exit 1
 	contains "${preferences[1]}" ${paperformat[@]} && error "Invalid input" && exit 1
 	contains "${preferences[2]}" ${orientation[@]} && error "Invalid input" && exit 1
-	contains "${preferences[3]}" ${srces[@]} && error "Invalid input" && exit 1
-	contains "${preferences[4]}" ${resolution[@]} && error "Invalid input" && exit 1
+	contains "${preferences[3]}" ${resolution[@]} && error "Invalid input" && exit 1
+	contains "${preferences[4]}" ${srces[@]} && error "Invalid input" && exit 1
 	contains "${preferences[5]}" ${crop[@]} && error "Invalid input" && exit 1
 	contains "${preferences[6]}" ${pdf[@]} && error "Invalid input" && exit 1
 	contains "${preferences[7]}" ${batch[@]} && error "Invalid input" && exit 1
+	contains "${preferences[8]}" ${dryRun[@]} && error "Invalid input" && exit 1
 
 	# look up the dimensions of the paperformat (in mm and in inches*10)
-	case "${settings[1]}" in
+	case "${preferences[1]}" in
 		A4) x=210; y=297; xIn=83; yIn=117;;
 		A5) x=148; y=210; xIn=58; yIn=83;;
 		*) error "Unknown papersize"; exit 1;;
 	esac
 
 	# swap dimensions if landscape is selected
-	if [[ "${settings[2]}" == landscape ]]
+	if [[ "${preferences[2]}" == landscape ]]
 	then
 		tmp="$x"  ;   x="$y"  ;   y="$tmp"
 		tmp="$xIn"; xIn="$yIn"; yIn="$tmp"
@@ -179,77 +268,30 @@ scanner(){
 	if [[ "${preferences[7]}" == batch ]]
 	then
 		mkdir -p "${HOME}/scans/$(date +%Y-%m-%d+%s)"
-		outfile="${HOME}/scans/$(date +%Y-%m-%d+%s)/$(date +%Y-%m-%d)_%d.${settings[0]}"
-		if [[ "${settings[3]}" == "ADF" ]] # only prompt before scanning the next page if source is non ADF
+		outfile="${HOME}/scans/$(date +%Y-%m-%d+%s)/$(date +%Y-%m-%d)_%d.${preferences[0]}"
+		if [[ "${preferences[3]}" == "ADF" ]] # only prompt before scanning the next page if source is non ADF
 		then
 			out="--batch=$outfile"
 		else
 			out="--batch-prompt --batch=$outfile"
 		fi
 	else
-		outfile="${HOME}/scans/$(date +%Y-%m-%d+%s)_%d.${settings[0]}"
+		outfile="${HOME}/scans/$(date +%Y-%m-%d+%s).${preferences[0]}"
 		out="--output-file=$outfile"
 	fi
 
 	# scan image (and print the command in advance)
-	echo scanimage --format="${settings[0]}" --progress --source="${settings[3]}" --resolution="${settings[4]}" -x "$x" -y "$y" $out
-	scanimage --format="${settings[0]//jpg/jpeg}" --progress --source="${settings[3]}" --resolution="${settings[4]}" -x "$x" -y "$y" $out
+	echo scanimage --format="${preferences[0]}" --progress --source="${preferences[4]}" --resolution="${preferences[3]}" -x "$x" -y "$y" $out
+	if [[ "${preference[8]}" != dry ]]
+	then
+		scanimage --format="${preferences[0]//jpg/jpeg}" --progress --source="${preferences[4]}" --resolution="${preferences[3]}" -x "$x" -y "$y" $out
+	fi
 
 	for file in ${outfile//%d/+([0-9])}
 	do
 		filelist+=("$file")
 	done
-
-	# remove white borders if wished
-	if [[ "${preferences[5]}" == "crop" ]]
-	then
-		# for the case thst more than one set of files should be cropped
-		notify-send "You can now remove distortions in the white border (which is to be removed), to improve the cropping result"
-		gimp "${filelist[@]}" #let the user remove black dots in the white border to improve the result
-
-		for file in ${filelist[@]}
-		do
-			# check what should be removed
-			echo convert "$file" -virtual-pixel edge -blur 0x10 -fuzz 15% -trim  -format '%wx%h%O\n' info:
-			crop1="$(convert "$file" -virtual-pixel edge -blur 0x10 -fuzz 15% -trim  -format '%wx%h%O\n' info:)"
-			# tmp="$(mktemp)"
-			# convert "$file" -crop "${crop1}" "${tmp}"
-
-			# crop2="$(convert "$tmp" -chop 40x0 -virtual-pixel edge -blur 0x10 -fuzz 15% -trim  -format '%wx%h%O\n' info:)"
-			# convert "$tmp" -crop "${crop2}" "${file%.${settings[0]}}-cropped.${settings[0]}"
-
-			# really crop the picture
-			echo convert "$file" -crop "${crop1}" "${file%.${settings[0]}}-cropped.${settings[0]}"
-			convert "$file" -crop "${crop1}" "${file%.${settings[0]}}-cropped.${settings[0]}"
-			filelist1+=("${file%.${settings[0]}}-cropped.${settings[0]}")
-			# rm -v "$tmp"
-		done
-	fi
-
-	# enhance pictures after (potentially) cropping
-	for file in ${filelist[@]}
-	do
-		convert "$file" -normalize -gamma 0.8,0.8,0.8 +dither -posterize 3 "${file%${preferences[0]}}-enh.${preferences[0]}"
-		filelist2+=("${file%${preferences[0]}}-enh.${preferences[0]}")
-	done
-
-	# make a pdf out of the picture(s) if wished
-	if [[ "${preferences[6]}" == "pdf" ]]
-	then
-		# paperdimensions will be the ones that were scanned, each image will be on a new page
-
-		# pdf out of original pictures
-		echo convert $(printf "( -size $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist[@]})  -units pixelsperinch -density 150 "${outfile%${settings[0]}}pdf"
-		convert $(printf "( -size $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist[@]})  -units pixelsperinch -density 150 "${outfile%${settings[0]}}pdf"
-
-		# pdf out of cropped pictures
-		echo convert $(printf "( -size $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist1[@]})  -units pixelsperinch -density 150 "${outfile%.${settings[0]}}-crop.pdf"
-		convert $(printf "( -size $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist1[@]})  -units pixelsperinch -density 150 "${outfile%.${settings[0]}}-crop.pdf"
-
-		# pdf out of enhanced pictures
-		echo convert $(printf "( -size $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist2[@]})  -units pixelsperinch -density 150 "${outfile%.${settings[0]}}-enh.pdf"
-		convert $(printf "( -size $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) xc:white %s -resize $(( (xIn*105)/10 ))x$(( (yIn*150)/10 )) -composite ) "  ${filelist2[@]})  -units pixelsperinch -density 150 "${outfile%.${settings[0]}}-enh.pdf"
-	fi
+	post-editing
 }
 
 if [[ -z "$1" ]]
@@ -260,13 +302,20 @@ else
 	action="$1"
 fi
 
-scanner $@
-
-# case "$action" in
-# 	scan) scanner;;
-# 	print) printer;;
-# 	*) error "Unknown action selected";;
-# esac
+case "$1" in
+	scan) scanner;;
+	post-editing)
+		if [[ -f "$2" ]]
+		then
+			preferences=(jpg A4 portrait 300 Flatbed crop pdf noBatch noDry)
+			xIn=83; yIn=117
+			outfile="$2"
+			filelist="$2"
+			post-editing
+		fi
+		;;
+	*) scanner $@;;
+esac
 
 
 # yad --text=Scanner --form --field=Fileformat:CB 'png!jpg!tiff' --field=Papersize:CB 'A4!A5' --field=Orientation:CB 'Portrait!Landscape' --field=res:NUM '300!0..600!50!0' --field=Outputfile:SFL

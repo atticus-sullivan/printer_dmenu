@@ -33,3 +33,7 @@ noCrop
 # PDF
 pdf 
 noPdf 
+##
+# Dry
+dry
+noDry
